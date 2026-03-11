@@ -240,7 +240,7 @@ const sock = makeWASocket({
 <summary>Click to expand code</summary>
 
 ```javascript
-const NodeCache = require('node-cache');
+const NodeCache = require('@cacheable/node-cache');
 const groupCache = new NodeCache({ stdTTL: 300, useClones: false });
 
 const sock = makeWASocket({
@@ -256,7 +256,7 @@ const sock = makeWASocket({
     // Disable online presence to receive notifications in mobile app
     markOnlineOnConnect: false,
     
-    // Connection timeouts
+    // Connection timeouts (default connectTimeoutMs is 20000)
     connectTimeoutMs: 60000,
     defaultQueryTimeoutMs: 60000,
 });
