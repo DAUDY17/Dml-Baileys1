@@ -55,6 +55,7 @@
         "music-metadata": "^7.12.3",
         "node-fetch": "^2.6.1",
         "pino": "^9.6.0",
+        "cache-manager": "latest",
         "protobufjs": "^7.2.4",
         "uuid": "^9.0.0",
         "ws": "^8.13.0"
