@@ -544,6 +544,14 @@ export const makeChatsSocket = (config: SocketConfig) => {
 		})
 	}
 
+	const reportInteropSpam = async (jid: string, spamFlow = 'account_info_block') => {
+		await query({
+			tag: 'iq',
+			attrs: { type: 'set', xmlns: 'spam', to: S_WHATSAPP_NET },
+			content: [{ tag: 'spam_list', attrs: { jid, spam_flow: spamFlow } }]
+		})
+	}
+
 	const getBusinessProfile = async (jid: string): Promise<WABusinessProfile | void> => {
 		const results = await query({
 			tag: 'iq',
@@ -1518,6 +1526,7 @@ export const makeChatsSocket = (config: SocketConfig) => {
 		updateProfileStatus,
 		updateProfileName,
 		updateBlockStatus,
+		reportInteropSpam,
 		updateDisableLinkPreviewsPrivacy,
 		updateCallPrivacy,
 		updateMessagesPrivacy,
