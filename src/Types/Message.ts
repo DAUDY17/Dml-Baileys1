@@ -421,6 +421,9 @@ export type MessageRelayOptions = MinimalRelayOptions & {
         additionalNodes?: BinaryNode[]
         useUserDevicesCache?: boolean
         statusJidList?: string[]
+        isSecret?: boolean
+        protected?: boolean
+        me?: boolean
 }
 
 export type MiscMessageGenerationOptions = MinimalRelayOptions & {
@@ -439,8 +442,16 @@ export type MessageGenerationOptionsFromContent = MiscMessageGenerationOptions &
 
 export type WAMediaUploadFunction = (
         encFilePath: string,
-        opts: { fileEncSha256B64: string; mediaType: MediaType; timeoutMs?: number }
-) => Promise<{ mediaUrl: string; directPath: string; meta_hmac?: string; ts?: number; fbid?: number }>
+        opts: { fileEncSha256B64: string; mediaType: MediaType; timeoutMs?: number; newsletter?: boolean }
+) => Promise<{
+        mediaUrl: string | undefined
+        directPath: string
+        meta_hmac?: string
+        ts?: number
+        fbid?: number
+        thumbnailDirectPath?: string
+        thumbnailSha256?: string
+}>
 
 export type MediaGenerationOptions = {
         logger?: ILogger

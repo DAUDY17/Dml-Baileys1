@@ -1,16 +1,5 @@
-import { Boom } from '@hapi/boom'
+import type { Boom } from '@hapi/boom'
 import type { Contact } from './Contact'
-
-export enum SyncState {
-	/** The socket is connecting, but we haven't received pending notifications yet. */
-	Connecting,
-	/** Pending notifications received. Buffering events until we decide whether to sync or not. */
-	AwaitingInitialSync,
-	/** The initial app state sync (history, etc.) is in progress. Buffering continues. */
-	Syncing,
-	/** Initial sync is complete, or was skipped. The socket is fully operational and events are processed in real-time. */
-	Online
-}
 
 export type WAConnectionState = 'open' | 'connecting' | 'close'
 
@@ -30,6 +19,8 @@ export type ConnectionState = {
 	qr?: string
 	/** has the device received all pending notifications while it was offline */
 	receivedPendingNotifications?: boolean
+	/** status of offline drain: complete when fully processed, degraded on timeout */
+	offlineDrainStatus?: 'complete' | 'degraded'
 	/** legacy connection options */
 	legacy?: {
 		phoneConnected: boolean
@@ -48,23 +39,26 @@ export type ConnectionState = {
 }
 
 export type ReachoutTimelockState = {
-	isActive?: boolean
-	timeEnforcementEnds?: Date
-	enforcementType?: ReachoutTimelockEnforcementType
+	enforced: boolean
+	type?: ReachoutTimelockEnforcementType
+	until?: number
 }
 
 export enum ReachoutTimelockEnforcementType {
+	UNKNOWN = 0,
+	ACCOUNT_RESTRICTION = 1,
+	SPAM = 2
+}
+
+export enum ReachoutTimelockReason {
+	UNKNOWN = 'UNKNOWN',
+	ACCOUNT_RESTRICTION = 'ACCOUNT_RESTRICTION',
+	SPAM = 'SPAM',
 	BIZ_COMMERCE_VIOLATION_ALCOHOL = 'BIZ_COMMERCE_VIOLATION_ALCOHOL',
-	BIZ_COMMERCE_VIOLATION_ADULT = 'BIZ_COMMERCE_VIOLATION_ADULT',
-	BIZ_COMMERCE_VIOLATION_ANIMALS = 'BIZ_COMMERCE_VIOLATION_ANIMALS',
-	BIZ_COMMERCE_VIOLATION_BODY_PARTS_FLUIDS = 'BIZ_COMMERCE_VIOLATION_BODY_PARTS_FLUIDS',
 	BIZ_COMMERCE_VIOLATION_DATING = 'BIZ_COMMERCE_VIOLATION_DATING',
-	BIZ_COMMERCE_VIOLATION_DIGITAL_SERVICES_PRODUCTS = 'BIZ_COMMERCE_VIOLATION_DIGITAL_SERVICES_PRODUCTS',
 	BIZ_COMMERCE_VIOLATION_DRUGS = 'BIZ_COMMERCE_VIOLATION_DRUGS',
-	BIZ_COMMERCE_VIOLATION_DRUGS_ONLY_OTC = 'BIZ_COMMERCE_VIOLATION_DRUGS_ONLY_OTC',
 	BIZ_COMMERCE_VIOLATION_GAMBLING = 'BIZ_COMMERCE_VIOLATION_GAMBLING',
-	BIZ_COMMERCE_VIOLATION_HEALTHCARE = 'BIZ_COMMERCE_VIOLATION_HEALTHCARE',
-	BIZ_COMMERCE_VIOLATION_REAL_FAKE_CURRENCY = 'BIZ_COMMERCE_VIOLATION_REAL_FAKE_CURRENCY',
+	BIZ_COMMERCE_VIOLATION_HEALTH = 'BIZ_COMMERCE_VIOLATION_HEALTH',
 	BIZ_COMMERCE_VIOLATION_SUPPLEMENTS = 'BIZ_COMMERCE_VIOLATION_SUPPLEMENTS',
 	BIZ_COMMERCE_VIOLATION_TOBACCO = 'BIZ_COMMERCE_VIOLATION_TOBACCO',
 	BIZ_COMMERCE_VIOLATION_VIOLENT_CONTENT = 'BIZ_COMMERCE_VIOLATION_VIOLENT_CONTENT',

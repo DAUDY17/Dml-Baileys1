@@ -4,7 +4,7 @@ import type { AuthenticationState, SocketConfig, WAVersion } from '../Types'
 import { Browsers } from '../Utils/browser-utils'
 import logger from '../Utils/logger'
 
-const version = [2, 3000, 1043857760]
+const version = [2, 3000, 1049110567]
 
 export const UNAUTHORIZED_CODES = [401, 403, 419]
 
@@ -64,6 +64,10 @@ export const DEFAULT_CONNECTION_CONFIG: SocketConfig = {
 	auth: undefined as unknown as AuthenticationState,
 	markOnlineOnConnect: true,
 	syncFullHistory: true,
+	offlinePendingFlushTimeoutMs: 60_000,
+	offlineBatchSize: 200,
+	offlineRefillThreshold: 200,
+	ignoreOfflineMessages: false,
 	patchMessageBeforeSending: msg => msg,
 	shouldSyncHistoryMessage: ({ syncType }: proto.Message.IHistorySyncNotification) => {
 		return syncType !== proto.HistorySync.HistorySyncType.FULL
@@ -98,6 +102,18 @@ export const MEDIA_PATH_MAP: { [T in MediaType]?: string } = {
 	'biz-cover-photo': '/pps/biz-cover-photo'
 }
 
+export const NEWSLETTER_MEDIA_PATH_MAP: { [T in MediaType]?: string } = {
+	image: '/newsletter/newsletter-image',
+	video: '/newsletter/newsletter-video',
+	document: '/newsletter/newsletter-document',
+	audio: '/newsletter/newsletter-audio',
+	gif: '/newsletter/newsletter-gif',
+	ptt: '/newsletter/newsletter-ptt',
+	ptv: '/newsletter/newsletter-ptv',
+	sticker: '/newsletter/newsletter-sticker-pack',
+	'thumbnail-link': '/newsletter/newsletter-image'
+}
+
 export const MEDIA_HKDF_KEY_MAPPING = {
 	audio: 'Audio',
 	document: 'Document',
@@ -127,22 +143,13 @@ export const MEDIA_KEYS = Object.keys(MEDIA_PATH_MAP) as MediaType[]
 export const HISTORY_SYNC_PAUSED_TIMEOUT_MS = 120_000
 
 export const MIN_PREKEY_COUNT = 5
-
 export const INITIAL_PREKEY_COUNT = 812
-
 export const UPLOAD_TIMEOUT = 30000
-export const MIN_UPLOAD_INTERVAL = 5000
+export const MIN_UPLOAD_INTERVAL = 60_000
 
 export const DEFAULT_CACHE_TTLS = {
 	SIGNAL_STORE: 5 * 60,
 	MSG_RETRY: 60 * 60,
 	CALL_OFFER: 5 * 60,
 	USER_DEVICES: 5 * 60
-}
-
-export const TimeMs = {
-	Minute: 60 * 1000,
-	Hour: 60 * 60 * 1000,
-	Day: 24 * 60 * 60 * 1000,
-	Week: 7 * 24 * 60 * 60 * 1000
 }
