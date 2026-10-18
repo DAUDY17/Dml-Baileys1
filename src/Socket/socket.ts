@@ -38,7 +38,9 @@ import {
         getCompanionPlatformId,
         getErrorCodeFromStreamError,
         getNextPreKeysNode,
+        handleCompanionRegRefresh,
         makeEventBuffer,
+        makePairingQRRenderer,
         makeNoiseHandler,
         makeOfflineResumeController,
         promiseTimeout,
@@ -824,6 +826,7 @@ export const makeSocket = (config: SocketConfig) => {
                 'CB:xmlstreamend',
                 () => void end(new Boom('Connection Terminated by Server', { statusCode: DisconnectReason.connectionClosed }))
         )
+        let refreshPairingQR: (() => void) | undefined
         ws.on('CB:iq,type:set,pair-device', async (stanza: BinaryNode) => {
                 const iq: BinaryNode = {
                         tag: 'iq',
@@ -839,30 +842,40 @@ export const makeSocket = (config: SocketConfig) => {
                 const refNodes = getBinaryNodeChildren(pairDeviceNode, 'ref')
                 const noiseKeyB64 = Buffer.from(creds.noiseKey.public).toString('base64')
                 const identityKeyB64 = Buffer.from(creds.signedIdentityKey.public).toString('base64')
-                const advB64 = creds.advSecretKey
 
-                let qrMs = qrTimeout || 60_000 // time to let a QR live
+                const renderer = makePairingQRRenderer(
+                        refNodes.map(refNode => (refNode.content as Buffer).toString('utf-8')),
+                        ref =>
+                                ev.emit('connection.update', {
+                                        qr: buildPairingQRData(ref, noiseKeyB64, identityKeyB64, creds.advSecretKey, browser)
+                                })
+                )
+                refreshPairingQR = () => void renderer.refresh()
+
+                let qrMs = qrTimeout || 60_000
                 const genPairQR = () => {
                         if (!ws.isOpen) {
                                 return
                         }
 
-                        const refNode = refNodes.shift()
-                        if (!refNode) {
+                        if (!renderer.next()) {
                                 void end(new Boom('QR refs attempts ended', { statusCode: DisconnectReason.timedOut }))
                                 return
                         }
 
-                        const ref = (refNode.content as Buffer).toString('utf-8')
-                        const qr = buildPairingQRData(ref, noiseKeyB64, identityKeyB64, advB64, browser)
-
-                        ev.emit('connection.update', { qr })
-
                         qrTimer = setTimeout(genPairQR, qrMs)
-                        qrMs = qrTimeout || 20_000 // shorter subsequent qrs
+                        qrMs = qrTimeout || 20_000
                 }
 
                 genPairQR()
+        })
+        ws.on('CB:notification,type:companion_reg_refresh', (node: BinaryNode) => {
+                handleCompanionRegRefresh(node, {
+                        creds,
+                        emitCredsUpdate: update => ev.emit('creds.update', update),
+                        refreshQR: () => refreshPairingQR?.(),
+                        logger
+                })
         })
         ws.on('CB:iq,,pair-success', async (stanza: BinaryNode) => {
                 logger.debug('pair success recv')
