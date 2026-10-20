@@ -774,16 +774,29 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
                 })
         }
 
+        // Mirrors WAWeb/Handle/PreKeyLow.js: skip a re-issued notification with the same stanza id.
+        const inFlightPreKeyLow = new Set<string>()
+
         const handleEncryptNotification = async (node: BinaryNode) => {
                 const from = node.attrs.from
                 if (from === S_WHATSAPP_NET) {
+                        const stanzaId = node.attrs.id
+                        if (stanzaId && inFlightPreKeyLow.has(stanzaId)) {
+                                return
+                        }
+
                         const countChild = getBinaryNodeChild(node, 'count')
                         const count = +countChild!.attrs.value!
                         const shouldUploadMorePreKeys = count < MIN_PREKEY_COUNT
 
                         logger.debug({ count, shouldUploadMorePreKeys }, 'recv pre-key count')
                         if (shouldUploadMorePreKeys) {
-                                await uploadPreKeys()
+                                if (stanzaId) inFlightPreKeyLow.add(stanzaId)
+                                try {
+                                        await uploadPreKeys()
+                                } finally {
+                                        if (stanzaId) inFlightPreKeyLow.delete(stanzaId)
+                                }
                         }
                 } else {
                         const result = await handleIdentityChange(node, {
