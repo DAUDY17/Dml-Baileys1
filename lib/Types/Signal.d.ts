@@ -34,7 +34,7 @@ type E2ESession = {
     registrationId: number;
     identityKey: Uint8Array;
     signedPreKey: SignedPreKey;
-    preKey: PreKey;
+    preKey?: PreKey;
 };
 type E2ESessionOpts = {
     jid: string;
