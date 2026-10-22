@@ -122,6 +122,14 @@ export function decodeMessageNode(stanza: BinaryNode, meId: string, meLid: strin
 	const participant: string | undefined = stanza.attrs.participant
 	const recipient: string | undefined = stanza.attrs.recipient
 
+	if (!msgId) {
+		throw new Boom('Invalid message stanza: missing id attribute', { data: stanza })
+	}
+
+	if (!from) {
+		throw new Boom('Invalid message stanza: missing from attribute', { data: stanza })
+	}
+
 	const addressingContext = extractAddressingContext(stanza)
 
 	const isMe = (jid: string) => areJidsSameUser(jid, meId)
@@ -129,21 +137,28 @@ export function decodeMessageNode(stanza: BinaryNode, meId: string, meLid: strin
 
 	if (isPnUser(from) || isLidUser(from) || isHostedLidUser(from) || isHostedPnUser(from)) {
 		if (recipient && !isJidMetaAI(recipient)) {
-			if (!isMe(from!) && !isMeLid(from!)) {
+			if (!isMe(from) && !isMeLid(from)) {
 				throw new Boom('receipient present, but msg not from me', { data: stanza })
 			}
 
-			if (isMe(from!) || isMeLid(from!)) {
+			if (isMe(from) || isMeLid(from)) {
 				fromMe = true
 			}
 
 			chatId = recipient
 		} else {
-			chatId = from!
+			// Peer-routed self stanzas (history sync, app-state sync, etc.) arrive
+			// with `from` set to our own device but no `recipient` attribute —
+			// still mark as fromMe so self-only protocolMessage handlers run.
+			if (isMe(from) || isMeLid(from)) {
+				fromMe = true
+			}
+
+			chatId = from
 		}
 
 		msgType = 'chat'
-		author = from!
+		author = from
 	} else if (isJidGroup(from)) {
 		if (!participant) {
 			throw new Boom('No participant in group message')
@@ -155,28 +170,28 @@ export function decodeMessageNode(stanza: BinaryNode, meId: string, meLid: strin
 
 		msgType = 'group'
 		author = participant
-		chatId = from!
+		chatId = from
 	} else if (isJidBroadcast(from)) {
 		if (!participant) {
 			throw new Boom('No participant in group message')
 		}
 
 		const isParticipantMe = isMe(participant)
-		if (isJidStatusBroadcast(from!)) {
+		if (isJidStatusBroadcast(from)) {
 			msgType = isParticipantMe ? 'direct_peer_status' : 'other_status'
 		} else {
 			msgType = isParticipantMe ? 'peer_broadcast' : 'other_broadcast'
 		}
 
 		fromMe = isParticipantMe
-		chatId = from!
+		chatId = from
 		author = participant
 	} else if (isJidNewsletter(from)) {
 		msgType = 'newsletter'
-		chatId = from!
-		author = from!
+		chatId = from
+		author = from
 
-		if (isMe(from!) || isMeLid(from!)) {
+		if (isMe(from) || isMeLid(from)) {
 			fromMe = true
 		}
 	} else {

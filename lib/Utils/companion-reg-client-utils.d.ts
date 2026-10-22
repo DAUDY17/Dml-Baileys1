@@ -13,4 +13,9 @@ export declare enum CompanionWebClientType {
 }
 export declare const getCompanionWebClientType: ([os, browserName]: WABrowserDescription) => CompanionWebClientType;
 export declare const getCompanionPlatformId: (browser: WABrowserDescription) => string;
+export type PairingCodePlatform = {
+    id: string;
+    display: string;
+};
+export declare const getPairingCodePlatform: ([os, browserName]: WABrowserDescription) => PairingCodePlatform;
 export declare const buildPairingQRData: (ref: string, noiseKeyB64: string, identityKeyB64: string, advB64: string, browser: WABrowserDescription) => string;

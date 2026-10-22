@@ -73,6 +73,12 @@ This update pulls in a batch of fixes and improvements from upstream Baileys and
 <details>
 <summary>🆕 Click to see everything in this update</summary>
 
+**New in 1.6.0:**
+- **Pairing codes work again — and fail loudly when they should.** The pairing key derivation now matches WhatsApp's protocol (PBKDF2), fixing codes that were always rejected while QR worked. On top of that, pairing requests wait for the server's readiness stanza, surface real server errors instead of dying silently, and can't be double-fired.
+- **Retries actually recover sessions now.** When a contact asks for a resend, the session bundle inside their retry receipt is used to rebuild the session, stale sessions are detected via registration-id/base-key checks, and group resends carry the sender-key distribution so people can actually decrypt.
+- **Sessions stop dying for silly reasons.** Auth files are written atomically (no more corrupted `creds.json` after a crash), undecryptable echoes from your own other devices no longer trigger stream-killing retry loops, and `<status>` stanzas are acked so the server doesn't end the stream.
+- **`Browsers.android` is available** for sessions that need to present as Android, and pre-key uploads are deduplicated the way WhatsApp Web does it.
+
 - **LID lookups are faster and less wasteful.** The LID mapping store now batches and coalesces concurrent lookups instead of firing off duplicate requests, and it has a proper `close()` for shutting it down cleanly.
 - **A real username API.** `checkUsername`, `setUsername`, `getMyUsername`, `findUserByUsername`, `fetchContactUsernames`, and a couple more — see [Username Management](#username-management). Also added `USyncPictureProtocol` and `USyncTextStatusProtocol` for fetching profile pictures and text statuses via USync directly.
 - **New `AIRich`, `Button`, `ButtonV2`, `Carousel`, and `Toolkit` builders.** See the [Rich Message Builders](#rich-message-builders) section — chainable APIs for buttons, carousels, and Meta AI-style rich responses with inline citations, LaTeX, code blocks, and tables. Each one also has a couple of shorter alias names if you'd rather import it as something else.

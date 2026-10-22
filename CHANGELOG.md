@@ -1,3 +1,19 @@
+# 1.6.0 (2026-10-20)
+
+### Features
+- Added `Browsers.android` companion profile (upstream #2201) so sessions can present as Android, e.g. for receiving view-once media
+
+### Fixes
+- **Pairing code rejected by WhatsApp (key derivation)** — `derivePairingCodeKey` now uses PBKDF2-SHA256 with 131,072 iterations, matching WhatsApp's protocol; the old HKDF-derived key could never be decrypted by the phone, so every pairing code failed while QR worked
+- **Pairing request flow hardened** (upstream #2559) — `companion_hello` is now sent via `query()` so server rejections surface as real errors instead of a silently dead code; requests queue until `pair-device` is received; a second concurrent request is rejected; `creds.me` is only set after the server accepts; the `companion_platform_display` value is normalized to a WhatsApp-accepted browser/OS pair; pending requests are rejected if the connection closes mid-pairing
+- **Retry receipts now inject the E2E session bundle** (upstream #2507) — when a peer's retry receipt carries a key bundle, the session is injected before resending; registration-id mismatches and base-key collisions on repeated retries now delete the stale session; group/status resends embed the sender-key distribution message (SKDM) so recipients can decrypt
+- **Pre-key uploads deduplicated** — a re-issued `PreKeyLow` notification with the same stanza id no longer triggers a second concurrent pre-key upload (mirrors WA Web)
+- **No more retry receipts for undecryptable own messages** (upstream #2864) — echo messages from your other devices are acked instead of requested again, which previously made the server tear the stream down (fake 500 "bad session" closes)
+- **Top-level `<status>` stanzas are acked** (upstream #2866) — accounts receiving statuses as a `<status>` stanza no longer get their stream ended by the server ~50 minutes in
+- **Multi-file auth state is written atomically** (upstream #2855) — writes go to a temp file and are renamed over the target, so a crash mid-write can no longer corrupt `creds.json` and silently reset the session; existing file permissions are preserved
+- **Message stanza validation** — stanzas missing an `id` or `from` attribute now fail with a clear error instead of being decoded with undefined values
+- **Peer-routed self stanzas decode as `fromMe`** — history-sync / app-state stanzas routed from your own device (no `recipient` attribute) are marked `fromMe`, so self-only protocol message handlers run on them
+
 # 1.5.2
 
 ### Fixes

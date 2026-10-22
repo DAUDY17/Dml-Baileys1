@@ -35,10 +35,12 @@ import {
         generateMdTagPrefix,
         generateRegistrationNode,
         getCodeFromWSError,
-        getCompanionPlatformId,
+        getPairingCodePlatform,
         getErrorCodeFromStreamError,
         getNextPreKeysNode,
+        handleCompanionRegRefresh,
         makeEventBuffer,
+        makePairingQRRenderer,
         makeNoiseHandler,
         makeOfflineResumeController,
         promiseTimeout,
@@ -368,6 +370,10 @@ export const makeSocket = (config: SocketConfig) => {
         let keepAliveReq: NodeJS.Timeout
         let qrTimer: NodeJS.Timeout
         let closed = false
+        let pairingReady = false
+        let pairingInProgress = false
+        let pendingPairingResolve: (() => void) | undefined
+        let pendingPairingReject: ((err: Error) => void) | undefined
 
         const socketEndHandlers: Array<(error: Error | undefined) => void | Promise<void>> = []
 
@@ -598,6 +604,14 @@ export const makeSocket = (config: SocketConfig) => {
                 clearInterval(keepAliveReq)
                 clearTimeout(qrTimer)
 
+                pairingReady = false
+                pairingInProgress = false
+                pendingPairingReject?.(
+                        error || new Boom('Connection closed before pairing completed', { statusCode: DisconnectReason.connectionClosed })
+                )
+                pendingPairingResolve = undefined
+                pendingPairingReject = undefined
+
                 ws.removeAllListeners('close')
                 ws.removeAllListeners('open')
                 ws.removeAllListeners('message')
@@ -718,7 +732,7 @@ export const makeSocket = (config: SocketConfig) => {
                 void end(new Boom(msg || 'Intentional Logout', { statusCode: DisconnectReason.loggedOut }))
         }
 
-        const requestPairingCode = async (phoneNumber: string, customPairingCode?: string): Promise<string> => {
+        const sendPairingCodeRequest = async (phoneNumber: string, customPairingCode?: string): Promise<string> => {
                 const pairingCode = customPairingCode ?? bytesToCrockford(randomBytes(5))
 
                 if (customPairingCode && customPairingCode?.length !== 8) {
@@ -727,59 +741,106 @@ export const makeSocket = (config: SocketConfig) => {
 
                 authState.creds.pairingCode = pairingCode
 
-                authState.creds.me = {
-                        id: jidEncode(phoneNumber, 's.whatsapp.net'),
-                        name: '~'
-                }
-                ev.emit('creds.update', authState.creds)
-                await sendNode({
-                        tag: 'iq',
-                        attrs: {
-                                to: S_WHATSAPP_NET,
-                                type: 'set',
-                                id: generateMessageTag(),
-                                xmlns: 'md'
-                        },
-                        content: [
-                                {
-                                        tag: 'link_code_companion_reg',
-                                        attrs: {
-                                                jid: authState.creds.me.id,
-                                                stage: 'companion_hello',
+                const jid = jidEncode(phoneNumber, 's.whatsapp.net')
+                const pairingPlatform = getPairingCodePlatform(browser)
 
-                                                should_show_push_notification: 'true'
-                                        },
-                                        content: [
-                                                {
-                                                        tag: 'link_code_pairing_wrapped_companion_ephemeral_pub',
-                                                        attrs: {},
-                                                        content: await generatePairingKey()
+                try {
+                        const result = await query({
+                                tag: 'iq',
+                                attrs: {
+                                        to: S_WHATSAPP_NET,
+                                        type: 'set',
+                                        xmlns: 'md'
+                                },
+                                content: [
+                                        {
+                                                tag: 'link_code_companion_reg',
+                                                attrs: {
+                                                        jid,
+                                                        stage: 'companion_hello',
+                                                        should_show_push_notification: 'true'
                                                 },
-                                                {
-                                                        tag: 'companion_server_auth_key_pub',
-                                                        attrs: {},
-                                                        content: authState.creds.noiseKey.public
-                                                },
-                                                {
-                                                        tag: 'companion_platform_id',
-                                                        attrs: {},
-                                                        content: getCompanionPlatformId(browser)
-                                                },
-                                                {
-                                                        tag: 'companion_platform_display',
-                                                        attrs: {},
-                                                        content: `${browser[1]} (${browser[0]})`
-                                                },
-                                                {
-                                                        tag: 'link_code_pairing_nonce',
-                                                        attrs: {},
-                                                        content: '0'
-                                                }
-                                        ]
-                                }
-                        ]
-                })
-                return authState.creds.pairingCode
+                                                content: [
+                                                        {
+                                                                tag: 'link_code_pairing_wrapped_companion_ephemeral_pub',
+                                                                attrs: {},
+                                                                content: await generatePairingKey()
+                                                        },
+                                                        {
+                                                                tag: 'companion_server_auth_key_pub',
+                                                                attrs: {},
+                                                                content: authState.creds.noiseKey.public
+                                                        },
+                                                        {
+                                                                tag: 'companion_platform_id',
+                                                                attrs: {},
+                                                                content: pairingPlatform.id
+                                                        },
+                                                        {
+                                                                tag: 'companion_platform_display',
+                                                                attrs: {},
+                                                                content: pairingPlatform.display
+                                                        },
+                                                        {
+                                                                tag: 'link_code_pairing_nonce',
+                                                                attrs: {},
+                                                                content: '0'
+                                                        }
+                                                ]
+                                        }
+                                ]
+                        })
+
+                        if (!result) {
+                                throw new Boom('Timed out waiting for pairing code response', { statusCode: DisconnectReason.timedOut })
+                        }
+                } catch (error) {
+                        if (authState.creds.pairingCode === pairingCode) {
+                                authState.creds.pairingCode = undefined
+                        }
+
+                        throw error
+                }
+
+                authState.creds.me = { id: jid, name: '~' }
+                ev.emit('creds.update', authState.creds)
+
+                return pairingCode
+        }
+
+        const requestPairingCode = async (phoneNumber: string, customPairingCode?: string): Promise<string> => {
+                if (customPairingCode && customPairingCode.length !== 8) {
+                        throw new Error('Custom pairing code must be exactly 8 chars')
+                }
+
+                if (pairingInProgress) {
+                        throw new Boom('A pairing request is already in progress', { statusCode: 400 })
+                }
+
+                pairingInProgress = true
+
+                try {
+                        if (!pairingReady) {
+                                logger.debug('pairing not ready yet, queuing request until pair-device is received')
+                                await new Promise<void>((resolve, reject) => {
+                                        pendingPairingResolve = () => {
+                                                pendingPairingResolve = undefined
+                                                pendingPairingReject = undefined
+                                                resolve()
+                                        }
+
+                                        pendingPairingReject = (err: Error) => {
+                                                pendingPairingResolve = undefined
+                                                pendingPairingReject = undefined
+                                                reject(err)
+                                        }
+                                })
+                        }
+
+                        return await sendPairingCodeRequest(phoneNumber, customPairingCode)
+                } finally {
+                        pairingInProgress = false
+                }
         }
 
         async function generatePairingKey() {
@@ -824,6 +885,7 @@ export const makeSocket = (config: SocketConfig) => {
                 'CB:xmlstreamend',
                 () => void end(new Boom('Connection Terminated by Server', { statusCode: DisconnectReason.connectionClosed }))
         )
+        let refreshPairingQR: (() => void) | undefined
         ws.on('CB:iq,type:set,pair-device', async (stanza: BinaryNode) => {
                 const iq: BinaryNode = {
                         tag: 'iq',
@@ -835,34 +897,47 @@ export const makeSocket = (config: SocketConfig) => {
                 }
                 await sendNode(iq)
 
+                pairingReady = true
+                pendingPairingResolve?.()
+
                 const pairDeviceNode = getBinaryNodeChild(stanza, 'pair-device')
                 const refNodes = getBinaryNodeChildren(pairDeviceNode, 'ref')
                 const noiseKeyB64 = Buffer.from(creds.noiseKey.public).toString('base64')
                 const identityKeyB64 = Buffer.from(creds.signedIdentityKey.public).toString('base64')
-                const advB64 = creds.advSecretKey
 
-                let qrMs = qrTimeout || 60_000 // time to let a QR live
+                const renderer = makePairingQRRenderer(
+                        refNodes.map(refNode => (refNode.content as Buffer).toString('utf-8')),
+                        ref =>
+                                ev.emit('connection.update', {
+                                        qr: buildPairingQRData(ref, noiseKeyB64, identityKeyB64, creds.advSecretKey, browser)
+                                })
+                )
+                refreshPairingQR = () => void renderer.refresh()
+
+                let qrMs = qrTimeout || 60_000
                 const genPairQR = () => {
                         if (!ws.isOpen) {
                                 return
                         }
 
-                        const refNode = refNodes.shift()
-                        if (!refNode) {
+                        if (!renderer.next()) {
                                 void end(new Boom('QR refs attempts ended', { statusCode: DisconnectReason.timedOut }))
                                 return
                         }
 
-                        const ref = (refNode.content as Buffer).toString('utf-8')
-                        const qr = buildPairingQRData(ref, noiseKeyB64, identityKeyB64, advB64, browser)
-
-                        ev.emit('connection.update', { qr })
-
                         qrTimer = setTimeout(genPairQR, qrMs)
-                        qrMs = qrTimeout || 20_000 // shorter subsequent qrs
+                        qrMs = qrTimeout || 20_000
                 }
 
                 genPairQR()
+        })
+        ws.on('CB:notification,type:companion_reg_refresh', (node: BinaryNode) => {
+                handleCompanionRegRefresh(node, {
+                        creds,
+                        emitCredsUpdate: update => ev.emit('creds.update', update),
+                        refreshQR: () => refreshPairingQR?.(),
+                        logger
+                })
         })
         ws.on('CB:iq,,pair-success', async (stanza: BinaryNode) => {
                 logger.debug('pair success recv')

@@ -110,17 +110,30 @@ export function sha256(buffer: Buffer) {
 }
 
 export async function derivePairingCodeKey(pairingCode: string, salt: Buffer): Promise<Buffer> {
-	const key = await subtle.importKey(
-		'raw',
-		Buffer.from(pairingCode),
-		{ name: 'HKDF', hash: 'SHA-256' },
-		false,
-		['deriveBits']
-	)
-	const bits = await subtle.deriveBits(
-		{ name: 'HKDF', hash: 'SHA-256', salt, info: new Uint8Array(0) },
-		key,
+	// Must match WhatsApp's pairing protocol (and upstream Baileys):
+	// the phone derives this key with PBKDF2 to unwrap the companion
+	// ephemeral key. Deriving with HKDF instead produces a different
+	// key, so the phone can never decrypt it and pairing always fails
+	// (QR pairing does not use this function, so QR still works).
+	const encoder = new TextEncoder()
+	const pairingCodeBuffer = encoder.encode(pairingCode)
+	const saltBuffer = new Uint8Array(salt instanceof Uint8Array ? salt : new Uint8Array(salt))
+
+	const keyMaterial = await subtle.importKey('raw', pairingCodeBuffer as BufferSource, { name: 'PBKDF2' }, false, [
+		'deriveBits'
+	])
+
+	// 2 << 16 = 131,072 iterations
+	const derivedBits = await subtle.deriveBits(
+		{
+			name: 'PBKDF2',
+			salt: saltBuffer as BufferSource,
+			iterations: 2 << 16,
+			hash: 'SHA-256'
+		},
+		keyMaterial,
 		32 * 8
 	)
-	return Buffer.from(bits)
+
+	return Buffer.from(derivedBits)
 }

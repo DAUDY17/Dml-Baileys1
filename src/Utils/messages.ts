@@ -933,6 +933,54 @@ export const getContentType = (content: proto.IMessage | undefined) => {
 	}
 }
 
+export const FUTURE_PROOF_MESSAGE_KEYS = [
+	'acp2SettingMessage',
+	'associatedChildMessage',
+	'audioStickerMessage',
+	'botForwardedMessage',
+	'botGroupParticipantMessage',
+	'botInvokeMessage',
+	'botPlatformRegistrationSuccessMessage',
+	'botTaskMessage',
+	'documentWithCaptionMessage',
+	'editedMessage',
+	'ephemeralMessage',
+	'eventCoverImage',
+	'groupMentionedMessage',
+	'groupStatusMentionMessage',
+	'groupStatusMessage',
+	'groupStatusMessageV2',
+	'limitSharingMessage',
+	'lottieStickerMessage',
+	'newsletterAdminProfileMessage',
+	'newsletterAdminProfileMessageV2',
+	'newsletterAdminProfileStatusMessage',
+	'newsletterScheduledMessage',
+	'pollCreationMessageV4',
+	'pollCreationOptionImageMessage',
+	'questionMessage',
+	'questionReplyMessage',
+	'spoilerMessage',
+	'statusAddYours',
+	'statusMentionMessage',
+	'viewOnceMessage',
+	'viewOnceMessageV2',
+	'viewOnceMessageV2Extension'
+] as const
+
+const getFutureProofMessage = (message: WAMessageContent | null | undefined) => {
+	if (!message) {
+		return undefined
+	}
+	for (const key of FUTURE_PROOF_MESSAGE_KEYS) {
+		const wrapper = (message as any)[key]
+		if (wrapper) {
+			return wrapper as { message?: WAMessageContent }
+		}
+	}
+	return undefined
+}
+
 export const normalizeMessageContent = (content: WAMessageContent | null | undefined): WAMessageContent | undefined => {
 	if (!content) {
 		return undefined
@@ -947,21 +995,7 @@ export const normalizeMessageContent = (content: WAMessageContent | null | undef
 		content = inner.message
 	}
 
-	return content!
-
-	function getFutureProofMessage(message: typeof content) {
-		return (
-			message?.ephemeralMessage ||
-			message?.viewOnceMessage ||
-			message?.documentWithCaptionMessage ||
-			message?.viewOnceMessageV2 ||
-			message?.viewOnceMessageV2Extension ||
-			message?.editedMessage ||
-			message?.associatedChildMessage ||
-			message?.groupStatusMessage ||
-			message?.groupStatusMessageV2
-		)
-	}
+	return content
 }
 
 export const extractMessageContent = (content: WAMessageContent | undefined | null): WAMessageContent | undefined => {

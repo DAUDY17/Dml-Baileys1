@@ -74,6 +74,7 @@ import {
         getBinaryNodeChildBuffer,
         getBinaryNodeChildren,
         getBinaryNodeChildString,
+        getBinaryNodeChildUInt,
         isJidGroup,
         isJidNewsletter,
         isJidStatusBroadcast,
@@ -773,16 +774,29 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
                 })
         }
 
+        // Mirrors WAWeb/Handle/PreKeyLow.js: skip a re-issued notification with the same stanza id.
+        const inFlightPreKeyLow = new Set<string>()
+
         const handleEncryptNotification = async (node: BinaryNode) => {
                 const from = node.attrs.from
                 if (from === S_WHATSAPP_NET) {
+                        const stanzaId = node.attrs.id
+                        if (stanzaId && inFlightPreKeyLow.has(stanzaId)) {
+                                return
+                        }
+
                         const countChild = getBinaryNodeChild(node, 'count')
                         const count = +countChild!.attrs.value!
                         const shouldUploadMorePreKeys = count < MIN_PREKEY_COUNT
 
                         logger.debug({ count, shouldUploadMorePreKeys }, 'recv pre-key count')
                         if (shouldUploadMorePreKeys) {
-                                await uploadPreKeys()
+                                if (stanzaId) inFlightPreKeyLow.add(stanzaId)
+                                try {
+                                        await uploadPreKeys()
+                                } finally {
+                                        if (stanzaId) inFlightPreKeyLow.delete(stanzaId)
+                                }
                         }
                 } else {
                         const result = await handleIdentityChange(node, {
@@ -1295,11 +1309,17 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
                 await msgRetryCache.set(key, newValue)
         }
 
-        const sendMessagesAgain = async (key: WAMessageKey, ids: string[], retryNode: BinaryNode) => {
+        const sendMessagesAgain = async (
+                key: WAMessageKey,
+                ids: string[],
+                retryNode: BinaryNode,
+                receiptNode: BinaryNode
+        ) => {
                 const remoteJid = key.remoteJid!
                 const participant = key.participant || remoteJid
 
                 const retryCount = +retryNode.attrs.count! || 1
+                const msgId = ids[0]
 
                 const msgs: (proto.IMessage | undefined)[] = []
                 for (const id of ids) {
@@ -1330,12 +1350,56 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
 
                 const sendToAll = !jidDecode(participant)?.device
 
+                const sessionId = signalRepository.jidToSignalProtocolAddress(participant)
+                let injectedFromBundle = false
+
+                const bundle = extractE2ESessionFromRetryReceipt(receiptNode)
+                if (bundle) {
+                        try {
+                                await signalRepository.injectE2ESession({ jid: participant, session: bundle })
+                                injectedFromBundle = true
+                                logger.debug({ participant, retryCount }, 'injected session from retry receipt key bundle')
+                        } catch (error) {
+                                logger.warn({ error, participant }, 'failed to inject session from retry receipt')
+                        }
+                }
+
+                if (!injectedFromBundle) {
+                        const receivedRegId = getBinaryNodeChildUInt(receiptNode, 'registration', 4)
+                        if (typeof receivedRegId === 'number' && Number.isInteger(receivedRegId)) {
+                                const info = await signalRepository.getSessionInfo(participant)
+                                if (info && info.registrationId !== 0 && info.registrationId !== receivedRegId) {
+                                        logger.info(
+                                                { participant, stored: info.registrationId, received: receivedRegId },
+                                                'reg id mismatch on retry without bundle, deleting session'
+                                        )
+                                        await authState.keys.set({ session: { [sessionId]: null } })
+                                }
+                        }
+                }
+
+                const BASE_KEY_CHECK_RETRY = 2
+                if (msgId && messageRetryManager) {
+                        const info = await signalRepository.getSessionInfo(participant)
+                        if (info) {
+                                if (retryCount === BASE_KEY_CHECK_RETRY) {
+                                        messageRetryManager.saveBaseKey(sessionId, msgId, info.baseKey)
+                                } else if (retryCount > BASE_KEY_CHECK_RETRY) {
+                                        if (messageRetryManager.hasSameBaseKey(sessionId, msgId, info.baseKey)) {
+                                                logger.warn({ participant, retryCount }, 'base key collision on retry, forcing fresh session')
+                                                await authState.keys.set({ session: { [sessionId]: null } })
+                                        }
+
+                                        messageRetryManager.deleteBaseKey(sessionId, msgId)
+                                }
+                        }
+                }
+
                 let shouldRecreateSession = false
                 let recreateReason = ''
 
-                if (enableAutoSessionRecreation && messageRetryManager && retryCount > 1) {
+                if (enableAutoSessionRecreation && messageRetryManager && retryCount > 1 && !injectedFromBundle) {
                         try {
-                                const sessionId = signalRepository.jidToSignalProtocolAddress(participant)
 
                                 const hasSession = await signalRepository.validateSession(participant)
                                 const result = messageRetryManager.shouldRecreateSession(participant, hasSession.exists)
@@ -1351,13 +1415,18 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
                         }
                 }
 
-                await assertSessions([participant], true)
+                if (!injectedFromBundle) {
+                        await assertSessions([participant], true)
+                }
 
                 if (isJidGroup(remoteJid)) {
                         await authState.keys.set({ 'sender-key-memory': { [remoteJid]: null } })
                 }
 
-                logger.debug({ participant, sendToAll, shouldRecreateSession, recreateReason }, 'forced new session for retry recp')
+                logger.debug(
+                        { participant, sendToAll, shouldRecreateSession, recreateReason, injectedFromBundle },
+                        'prepared session for retry resend'
+                )
 
                 for (const [i, msg] of msgs.entries()) {
                         if (!ids[i]) continue
@@ -1447,7 +1516,7 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
                                                                 try {
                                                                         await updateSendMessageAgainCount(ids[0], key.participant)
                                                                         logger.debug({ attrs, key }, 'recv retry request')
-                                                                        await sendMessagesAgain(key, ids, retryNode!)
+                                                                        await sendMessagesAgain(key, ids, retryNode!, node)
                                                                 } catch (error: unknown) {
                                                                         logger.error(
                                                                                 { key, ids, trace: error instanceof Error ? error.stack : 'Unknown error' },
@@ -1605,6 +1674,20 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
                                                 acked = true
                                                 await sendMessageAck(node)
                                         } else {
+                                                // A retry receipt only makes sense for a message from SOMEONE ELSE.
+                                                // An undecryptable `fromMe` message is the echo of our own account
+                                                // synced from another of our devices, encrypted under the ORIGINATING
+                                                // device's session — not a session this client holds. Asking for a
+                                                // resend is asking ourselves; the server answers with a stream error
+                                                // and tears the stream down (surfaces as a 500 "bad session" close).
+                                                // Ack and move on: a retry for our own message cannot bring the
+                                                // content back, and keeping the connection alive is what matters.
+                                                if (msg.key.fromMe) {
+                                                        logger.debug({ key: msg.key }, 'undecryptable fromMe message: acking without a retry receipt')
+                                                        acked = true
+                                                        return sendMessageAck(node)
+                                                }
+
                                                 if (isJidStatusBroadcast(msg.key.remoteJid!)) {
                                                         const messageAge = unixTimestampSeconds() - toNumber(msg.messageTimestamp)
                                                         if (messageAge > STATUS_EXPIRY_SECONDS) {
@@ -1915,6 +1998,13 @@ export const makeMessagesRecvSocket = (config: SocketConfig) => {
         ws.on('CB:notification', async (node: BinaryNode) => {
                 await processNode('notification', node, 'handling notification', handleNotification)
         })
+        // Some accounts now get contacts' statuses as a top-level <status> stanza
+        // instead of <message from="status@broadcast">. It isn't decoded here, but it
+        // must be acked: the server ends the stream about 50 minutes later otherwise.
+        ws.on('CB:status', (node: BinaryNode) => {
+                sendMessageAck(node).catch(error => onUnexpectedError(error, 'acking status'))
+        })
+
         ws.on('CB:ack,class:message', (node: BinaryNode) => {
                 handleBadAck(node).catch(error => onUnexpectedError(error, 'handling bad ack'))
         })
